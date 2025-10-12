@@ -118,60 +118,44 @@ def init_config():
     return app_config
 
 
-def process_templates(app_config):
-    """Process Jinja2 templates and output to ../output folder"""
+def process_output_files(app_config):
+    """Process templates and copy files to the output directory."""
     templates_dir = base_dir / "etc" / "templates"
-    output_dir = base_dir / "output"
-    
-    # Create output directory if it doesn't exist
-    output_dir.mkdir(exist_ok=True)
-    
-    if not templates_dir.exists():
-        logger.debug(f"Templates directory not found: {templates_dir}")
-        return
-    
-    # Setup Jinja2 environment
-    env = Environment(loader=FileSystemLoader(templates_dir))
-    
-    # Process all .j2 files
-    for template_file in templates_dir.glob("*.j2"):
-        logger.info(f"Processing template: {template_file.name}")
-        
-        try:
-            template = env.get_template(template_file.name)
-            rendered = template.render(**app_config["public_ips"])
-            
-            # Remove .j2 extension for output file
-            output_file = output_dir / template_file.stem
-            
-            with open(output_file, 'w') as f:
-                f.write(rendered)
-                
-            logger.debug(f"Template {template_file.name} rendered to {output_file}")
-            
-        except Exception as e:
-            logger.error(f"Error processing template {template_file.name}: {e}")
-
-
-def copy_files():
-    """Copy files from files/ directory to ../output folder verbatim"""
     files_dir = base_dir / "etc" / "files"
     output_dir = base_dir / "output"
-    
+
     # Create output directory if it doesn't exist
     output_dir.mkdir(exist_ok=True)
-    
-    if not files_dir.exists():
+
+    # Process templates
+    if templates_dir.exists():
+        logger.info("Processing templates...")
+        env = Environment(loader=FileSystemLoader(templates_dir))
+        for template_file in templates_dir.glob("*.j2"):
+            logger.info(f"  - {template_file.name}")
+            try:
+                template = env.get_template(template_file.name)
+                rendered = template.render(**app_config.get("public_ips", {}))
+                output_file = output_dir / template_file.stem
+                with open(output_file, 'w') as f:
+                    f.write(rendered)
+                logger.debug(f"    Rendered to {output_file}")
+            except Exception as e:
+                logger.error(f"    Error processing template {template_file.name}: {e}")
+    else:
+        logger.debug(f"Templates directory not found: {templates_dir}")
+
+    # Copy files
+    if files_dir.exists():
+        logger.info("Copying static files...")
+        for file_path in files_dir.iterdir():
+            if file_path.is_file():
+                dest_path = output_dir / file_path.name
+                shutil.copy2(file_path, dest_path)
+                logger.info(f"  - {file_path.name}")
+                logger.debug(f"    Copied to {dest_path}")
+    else:
         logger.debug(f"Files directory not found: {files_dir}")
-        return
-    
-    # Copy all files
-    for file_path in files_dir.iterdir():
-        if file_path.is_file():
-            dest_path = output_dir / file_path.name
-            shutil.copy2(file_path, dest_path)
-            logger.info(f"Copied {file_path.name} to output directory")
-            logger.debug(f"Source: {file_path}, Destination: {dest_path}")
 
 
 def load_domain(domain):
@@ -394,11 +378,7 @@ def main(dry_run, verbose, domain):
         sys.exit(1)
     
     # Process templates and copy files
-    logger.info("Processing templates...")
-    process_templates(app_config)
-    
-    logger.info("Copying files...")
-    copy_files()
+    process_output_files(app_config)
     
     # Determine which domains to process
     if domain:
