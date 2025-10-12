@@ -2,3 +2,6 @@ etc/porkbun.env
 *.key
 certificates
 accounts
+venv/*
+output/
+output/*
