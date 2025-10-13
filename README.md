@@ -11,8 +11,8 @@ What are the Goal post(s) of repo:
 
 ```
 [general]
-porkbun_public_api_key=(OR USE ENV VAR PORKBUN_API_KEY)
-porkbun_private_api_key=(OR USE ENV VAR PORKBUN_SECRET_API_KEY)
+porkbun_api_key=(OR USE ENV VAR PORKBUN_API_KEY)
+porkbun_secret_api_key=(OR USE ENV VAR PORKBUN_SECRET_API_KEY)
 porkbun_rest_endpoint=https://api-ipv4.porkbun.com/api/json/v3
 
 [domains]
