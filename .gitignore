@@ -3,5 +3,8 @@ etc/porkbun.env
 certificates
 accounts
 venv/*
+.venv/
 output/
 output/*
+__pycache__/
+*.pyc
