@@ -1,4 +1,6 @@
 etc/porkbun.env
+etc/porkbun_secrets.env
+.env
 *.key
 certificates
 accounts
