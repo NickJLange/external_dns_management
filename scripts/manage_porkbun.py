@@ -7,6 +7,7 @@ import os
 import shutil
 import shlex
 import subprocess
+import socket
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -643,6 +644,41 @@ def process_domain(domain, dry_run=False):
         create_record(domain, add_key, record, dry_run=dry_run)
 
 
+def report_service_check(status: int) -> None:
+    """Send a DogStatsD service check to the local Datadog agent on the batch host.
+
+    status: 0=OK, 2=CRITICAL. Best-effort; never raises, since a monitoring
+    hiccup must never fail the DNS sync itself.
+    """
+    host = os.environ.get("DD_AGENT_HOST", "172.17.0.1")
+    hostname = os.environ.get("DD_HOSTNAME", "BatchNode")
+    msg = f"_sc|dns.sync.status|{status}|h:{hostname}"
+    try:
+        port = int(os.environ.get("DD_AGENT_PORT", "8125"))
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.sendto(msg.encode(), (host, port))
+    except (OSError, ValueError):
+        pass
+
+
+def sync_domains(domains_to_process: list, dry_run: bool = False, verbose: bool = False) -> bool:
+    """Run process_domain for each domain in domains_to_process.
+
+    Returns True only if every domain synced without raising.
+    """
+    all_succeeded = True
+    for domain_name in domains_to_process:
+        try:
+            process_domain(domain_name, dry_run=dry_run)
+        except Exception as e:
+            all_succeeded = False
+            logger.error(f"Error processing domain {domain_name}: {e}")
+            if verbose:
+                import traceback
+                traceback.print_exc()
+    return all_succeeded
+
+
 @click.command()
 @click.option(
     "--dry-run", is_flag=True, help="Show what would be done without making changes"
@@ -703,6 +739,8 @@ def main(dry_run, verbose, domain, catch_up):
     else:
         domains_to_process = app_config["domains"]
 
+    sync_ok = True
+
     if catch_up:
         # --- catch-up mode: diff only, no sync ---
         total_records = 0
@@ -718,6 +756,7 @@ def main(dry_run, verbose, domain, catch_up):
                 total_records += len(d.porkbun_only)
                 total_conflicts += len(d.value_conflicts) + len(d.ttl_conflicts)
             except Exception as e:
+                sync_ok = False
                 logger.error(f"Error processing domain {domain_name}: {e}")
                 if verbose:
                     import traceback
@@ -745,16 +784,13 @@ def main(dry_run, verbose, domain, catch_up):
             print(f"\nDRY RUN: would create catchup branch and commit {total_records} records + {total_conflicts} conflicts")
     else:
         # --- normal sync mode ---
-        for domain_name in domains_to_process:
-            try:
-                process_domain(domain_name, dry_run=dry_run)
-            except Exception as e:
-                logger.error(f"Error processing domain {domain_name}: {e}")
-                if verbose:
-                    import traceback
-                    traceback.print_exc()
+        sync_ok = sync_domains(domains_to_process, dry_run=dry_run, verbose=verbose)
+        if not dry_run:
+            report_service_check(0 if sync_ok else 2)
 
     logger.info("Processing complete")
+    if not sync_ok:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

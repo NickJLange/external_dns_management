@@ -1,0 +1,20 @@
+[Unit]
+Description=Porkbun DNS sync
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=localhost/dns-sync:latest
+Volume=/data/infrastructure/dns_management:/app:z
+EnvironmentFile=/data/infrastructure/dns_management/etc/porkbun_secrets.env
+Environment=DD_AGENT_HOST=host.containers.internal
+Exec=python scripts/manage_porkbun.py
+
+[Service]
+Type=oneshot
+ExecStartPre=/usr/bin/git -C /data/infrastructure/dns_management pull --ff-only
+ExecStartPre=/usr/bin/git -C /data/infrastructure/dns_management submodule update --init
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target
