@@ -7,7 +7,6 @@ import os
 import shutil
 import shlex
 import subprocess
-import socket
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -651,23 +650,6 @@ def process_domain(domain, dry_run=False):
         create_record(domain, add_key, record, dry_run=dry_run)
 
 
-def report_service_check(status: int) -> None:
-    """Send a DogStatsD service check to the local Datadog agent on the batch host.
-
-    status: 0=OK, 2=CRITICAL. Best-effort; never raises, since a monitoring
-    hiccup must never fail the DNS sync itself.
-    """
-    host = os.environ.get("DD_AGENT_HOST", "172.17.0.1")
-    hostname = os.environ.get("DD_HOSTNAME", "BatchNode")
-    msg = f"_sc|dns.sync.status|{status}|h:{hostname}"
-    try:
-        port = int(os.environ.get("DD_AGENT_PORT", "8125"))
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.sendto(msg.encode(), (host, port))
-    except (OSError, ValueError):
-        pass
-
-
 def sync_domains(domains_to_process: list, dry_run: bool = False, verbose: bool = False) -> bool:
     """Run process_domain for each domain in domains_to_process.
 
@@ -792,8 +774,6 @@ def main(dry_run, verbose, domain, catch_up):
     else:
         # --- normal sync mode ---
         sync_ok = sync_domains(domains_to_process, dry_run=dry_run, verbose=verbose)
-        if not dry_run:
-            report_service_check(0 if sync_ok else 2)
 
     logger.info("Processing complete")
     if not sync_ok:

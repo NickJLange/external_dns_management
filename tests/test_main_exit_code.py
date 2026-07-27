@@ -32,27 +32,20 @@ def stub_main_dependencies(monkeypatch):
     monkeypatch.setattr(manage_porkbun, "logger", manage_porkbun.logging.getLogger("test"))
 
 
-def test_main_reports_critical_and_exits_1_on_sync_failure(monkeypatch, stub_main_dependencies):
-    calls = []
+def test_main_exits_1_on_sync_failure(monkeypatch, stub_main_dependencies):
     monkeypatch.setattr(manage_porkbun, "sync_domains", lambda *a, **k: False)
-    monkeypatch.setattr(manage_porkbun, "report_service_check", lambda status: calls.append(status))
 
     with pytest.raises(SystemExit) as exc_info:
         manage_porkbun.main.callback(dry_run=False, verbose=False, domain=None, catch_up=False)
 
-    assert calls == [2]
     assert exc_info.value.code == 1
 
 
-def test_main_reports_ok_and_does_not_exit_on_sync_success(monkeypatch, stub_main_dependencies):
-    calls = []
+def test_main_does_not_exit_on_sync_success(monkeypatch, stub_main_dependencies):
     monkeypatch.setattr(manage_porkbun, "sync_domains", lambda *a, **k: True)
-    monkeypatch.setattr(manage_porkbun, "report_service_check", lambda status: calls.append(status))
 
     # Should not raise SystemExit
     manage_porkbun.main.callback(dry_run=False, verbose=False, domain=None, catch_up=False)
-
-    assert calls == [0]
 
 
 def test_main_catch_up_mode_exits_nonzero_on_domain_failure(monkeypatch, stub_main_dependencies):
@@ -69,21 +62,3 @@ def test_main_catch_up_mode_exits_nonzero_on_domain_failure(monkeypatch, stub_ma
         manage_porkbun.main.callback(dry_run=False, verbose=False, domain=None, catch_up=True)
 
     assert exc_info.value.code == 1
-
-
-@pytest.mark.parametrize("sync_result", [True, False])
-def test_main_dry_run_never_reports_service_check(monkeypatch, stub_main_dependencies, sync_result):
-    calls = []
-    monkeypatch.setattr(manage_porkbun, "sync_domains", lambda *a, **k: sync_result)
-    monkeypatch.setattr(manage_porkbun, "report_service_check", lambda status: calls.append(status))
-
-    # main() still honors sync_ok for its own exit code regardless of
-    # dry_run; what we're asserting here is that report_service_check
-    # itself is never invoked while dry_run=True.
-    if sync_result:
-        manage_porkbun.main.callback(dry_run=True, verbose=False, domain=None, catch_up=False)
-    else:
-        with pytest.raises(SystemExit):
-            manage_porkbun.main.callback(dry_run=True, verbose=False, domain=None, catch_up=False)
-
-    assert calls == []
