@@ -111,3 +111,15 @@ def test_mx_priority_drift_detected_as_value_conflict():
     result = diff_domain("example.com", keyed(cfg_rec), keyed(pb_rec))
     assert result.in_sync == 0
     assert len(result.value_conflicts) == 1
+
+
+def test_txt_record_with_nonzero_porkbun_prio_is_in_sync():
+    """Porkbun returns a non-null prio for record types where priority is
+    meaningless (e.g. TXT); gen_key must not treat that as drift."""
+    cfg_txt = make_record("example.com", "TXT", "v=spf1 include:_spf.porkbun.com ~all", ttl="300", prio="None")
+    pb_txt = make_record("example.com", "TXT", "v=spf1 include:_spf.porkbun.com ~all", ttl="300", prio="1")
+    result = diff_domain("example.com", keyed(cfg_txt), keyed(pb_txt))
+    assert result.in_sync == 1
+    assert result.porkbun_only == []
+    assert result.config_only == []
+    assert result.value_conflicts == []

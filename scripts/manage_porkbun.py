@@ -306,11 +306,18 @@ def discover_base_dir():
 
 def gen_key(ds: dict[str, str]) -> str:
     """Generate a unique key for a DNS record"""
-    prio = str(ds.get("prio") or "0")
-    if prio in ("None", ""):
+    record_type = ds["type"].lower()
+    if record_type in ("mx", "srv"):
+        prio = str(ds.get("prio") or "0")
+        if prio in ("None", ""):
+            prio = "0"
+    else:
+        # Priority is meaningless for other record types, but Porkbun's API
+        # still returns a non-null value for them (e.g. prio="1" on a TXT
+        # record) -- ignore it here so that doesn't look like drift.
         prio = "0"
     key = "_".join(
-        [ds["name"].lower(), ds["content"], ds["type"].lower(), str(ds["ttl"]).lower(), prio]
+        [ds["name"].lower(), ds["content"], record_type, str(ds["ttl"]).lower(), prio]
     )
     return key
 
