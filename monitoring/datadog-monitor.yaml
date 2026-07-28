@@ -1,0 +1,87 @@
+# Datadog Monitor Configuration for DNS Sync
+# Deploy via Datadog API: https://docs.datadoghq.com/api/latest/monitors/#create-a-monitor
+#
+# Prerequisites:
+# - Datadog Agent running on lunarBeacon with systemd check enabled
+# - dns-sync.service managed by systemd (via Podman Quadlet)
+
+# Systemd Check Configuration (install on Datadog Agent on lunarBeacon)
+# Place in /etc/datadog-agent/conf.d/systemd.d/conf.yaml
+systemd_check:
+  instances:
+    - unit_names:
+        - cert-renewal.service
+        - dns-sync.service
+
+---
+# Monitor: service entered failed state
+# Fires if the last dns-sync run exited non-zero (Porkbun API error, git pull
+# failure, submodule auth failure, etc.)
+monitor:
+  name: "lunarBeacon - dns-sync.service Failed"
+  type: service check
+  query: '"systemd.service.failed".over("unit:dns-sync.service","host:lunarBeacon").by("host").last(1).count_by_status()'
+  message: |
+    {{#is_alert}}
+    dns-sync.service has entered the failed state on {{host.name}}.
+
+    The daily Porkbun DNS sync did not complete successfully.
+
+    Troubleshoot:
+      ssh lunarBeacon
+      journalctl --user -u dns-sync.service -n 100
+
+    @slack-homelab-alerts
+    {{/is_alert}}
+
+    {{#is_recovery}}
+    dns-sync.service has recovered on {{host.name}}.
+    {{/is_recovery}}
+  options:
+    thresholds:
+      critical: 1
+      ok: 1
+    notify_no_data: false
+    notify_audit: false
+    renotify_interval: 1440
+  tags:
+    - service:dns-sync
+    - env:production
+    - host:lunarBeacon
+  priority: 2
+
+---
+# Monitor: timer has not fired in >26 hours (catches missed runs / timer death)
+monitor_timer:
+  name: "lunarBeacon - dns-sync.timer Stale"
+  type: metric alert
+  query: "max(last_26h):max:systemd.timer.last_trigger_usec{unit:dns-sync.timer,host:lunarBeacon} < 1"
+  message: |
+    {{#is_alert}}
+    dns-sync.timer has not fired on {{host.name}} in over 26 hours.
+
+    The timer may be disabled or the unit may have failed to load.
+
+    Check:
+      ssh lunarBeacon
+      systemctl --user list-timers dns-sync
+      systemctl --user status dns-sync.timer
+
+    @slack-homelab-alerts
+    {{/is_alert}}
+
+    {{#is_recovery}}
+    dns-sync.timer is firing again on {{host.name}}.
+    {{/is_recovery}}
+  options:
+    thresholds:
+      critical: 1
+    notify_no_data: true
+    no_data_timeframe: 1440
+    notify_audit: false
+    renotify_interval: 1440
+  tags:
+    - service:dns-sync
+    - env:production
+    - host:lunarBeacon
+  priority: 2
