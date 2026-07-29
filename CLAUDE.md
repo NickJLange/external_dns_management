@@ -22,12 +22,12 @@ Note: avoid `--verbose` in dry-run — debug output includes plaintext API crede
 **Dry-run (safe, no DNS changes):**
 ```bash
 .venv/bin/python scripts/manage_porkbun.py --dry-run
-.venv/bin/python scripts/manage_porkbun.py --dry-run --domain nicklange.family
+.venv/bin/python scripts/manage_porkbun.py --dry-run --domain example.com
 ```
 
 **Live sync — only after reviewing dry-run output:**
 ```bash
-.venv/bin/python scripts/manage_porkbun.py --domain nicklange.family
+.venv/bin/python scripts/manage_porkbun.py --domain example.com
 ```
 
 ## Config
