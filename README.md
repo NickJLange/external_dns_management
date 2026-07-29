@@ -16,7 +16,7 @@ porkbun_secret_api_key=(OR USE ENV VAR PORKBUN_SECRET_API_KEY)
 porkbun_rest_endpoint=https://api-ipv4.porkbun.com/api/json/v3
 
 [domains]
-5l-labs.com
+example.com
 myhouse.com
 etc 
 etc
@@ -26,10 +26,10 @@ etc
 ### DNS domain format
 
 ```
-[5l-labs.com]
+[example.com]
 #FORMAT: TYPE KEY VALUE TTL [PRIO]
 # Lazy use of four spaces to support TXT records below - maybe increase to 20 down the line
-ALIAS    5l-labs.com    pixie.porkbun.com    300
+ALIAS    example.com    pixie.porkbun.com    300
 
 ```
 
