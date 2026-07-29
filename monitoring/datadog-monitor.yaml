@@ -3,8 +3,8 @@
 # Update via:  PUT  https://api.datadoghq.com/api/v1/monitor/<id>
 #
 # Deployed monitor IDs:
-#   309199795 — lunarBeacon - dns-sync Failed (log-based)
-#   309199798 — lunarBeacon - dns-sync Stale (log-based)
+#   309199795 — BatchMachine - dns-sync Failed (log-based)
+#   309199798 — BatchMachine - dns-sync Stale (log-based)
 #
 # Why log-based, not the systemd Agent check:
 # The Datadog systemd Agent check connects to the *system* D-Bus/systemd
@@ -23,7 +23,7 @@
 # journald log collection does work for user-unit logs (they flow into the
 # same system journal), so monitoring is now based on that instead.
 #
-# Prerequisites (on the Datadog Agent host, e.g. lunarBeacon):
+# Prerequisites (on the Datadog Agent host, e.g. BatchMachine):
 # - dd-agent added to the `systemd-journal` group (Datadog's documented
 #   journald integration setup step — https://docs.datadoghq.com/integrations/journald/):
 #     usermod -a -G systemd-journal dd-agent
@@ -109,7 +109,7 @@
 ---
 # Monitor: an ERROR was logged during a dns-sync run
 monitor:
-  name: "lunarBeacon - dns-sync Failed (log-based)"
+  name: "BatchMachine - dns-sync Failed (log-based)"
   type: log alert
   query: 'logs("service:dns-sync *ERROR*").index("main").rollup("count").last("15m") > 0'
   message: |
@@ -119,7 +119,7 @@ monitor:
     The daily Porkbun DNS sync did not complete successfully.
 
     Troubleshoot:
-      ssh lunarBeacon
+      ssh BatchMachine
       journalctl --user -u dns-sync.service -n 100
 
     @pagerduty-5L_Labs_Stability
@@ -137,14 +137,14 @@ monitor:
   tags:
     - service:dns-sync
     - env:production
-    - host:lunarBeacon
+    - host:BatchMachine
   priority: 2
 
 ---
 # Monitor: no successful completion log seen in >26 hours (catches missed
 # runs / a dead timer, replacing the broken timer-metric approach)
 monitor_stale:
-  name: "lunarBeacon - dns-sync Stale (log-based)"
+  name: "BatchMachine - dns-sync Stale (log-based)"
   type: log alert
   query: 'logs("service:dns-sync \"Processing complete\"").index("main").rollup("count").last("26h") < 1'
   message: |
@@ -154,7 +154,7 @@ monitor_stale:
     The timer may be disabled or the unit may have failed to load.
 
     Check:
-      ssh lunarBeacon
+      ssh BatchMachine
       systemctl --user list-timers dns-sync
       systemctl --user status dns-sync.timer
 
@@ -173,5 +173,5 @@ monitor_stale:
   tags:
     - service:dns-sync
     - env:production
-    - host:lunarBeacon
+    - host:BatchMachine
   priority: 2
