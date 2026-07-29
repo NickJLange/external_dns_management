@@ -1,87 +1,177 @@
 # Datadog Monitor Configuration for DNS Sync
-# Deploy via Datadog API: https://docs.datadoghq.com/api/latest/monitors/#create-a-monitor
+# Deploy via: POST https://api.datadoghq.com/api/v1/monitor
+# Update via:  PUT  https://api.datadoghq.com/api/v1/monitor/<id>
 #
-# Prerequisites:
-# - Datadog Agent running on lunarBeacon with systemd check enabled
+# Deployed monitor IDs:
+#   309199795 — BatchMachine - dns-sync Failed (log-based)
+#   309199798 — BatchMachine - dns-sync Stale (log-based)
+#
+# Why log-based, not the systemd Agent check:
+# The Datadog systemd Agent check connects to the *system* D-Bus/systemd
+# private socket only (/run/systemd/private), running as the unprivileged
+# dd-agent user. dns-sync.service is a `systemctl --user` unit, whose
+# private socket lives at /run/user/<uid>/systemd/private and is not
+# reachable by dd-agent. This is a structural limitation of the current
+# integration (confirmed against agent source), not a config bug — no
+# unit_names filtering or config change fixes it. The previous revision of
+# this file assumed systemd.service.failed / systemd.timer.last_trigger_usec
+# metrics existed for this purpose; they do not (confirmed via
+# `datadog-agent check systemd -l debug --json` — the only real
+# metrics/checks are systemd.units_by_state (host-wide, unscoped),
+# systemd.can_connect, and systemd.system.state).
+#
+# journald log collection does work for user-unit logs (they flow into the
+# same system journal), so monitoring is now based on that instead.
+#
+# Prerequisites (on the Datadog Agent host, e.g. BatchMachine):
+# - dd-agent added to the `systemd-journal` group (Datadog's documented
+#   journald integration setup step — https://docs.datadoghq.com/integrations/journald/):
+#     usermod -a -G systemd-journal dd-agent
+# - /etc/datadog-agent/conf.d/journald.d/conf.yaml:
+#     logs:
+#       - type: journald
+#         path: /var/log/journal/
+#         config_id: dns-sync
+#         source: systemd
+#         service: dns-sync
+#         include_user_units:
+#           - dns-sync.service
+#       - type: journald
+#         path: /var/log/journal/
+#         config_id: cert-renewal
+#         source: systemd
+#         service: cert-renewal
+#         include_user_units:
+#           - cert-renewal.service
+#   Two things to get right here, both easy to miss:
+#   - `config_id` is required on each block when multiple journald sources
+#     share the same `path` — without it the Agent silently tails only one
+#     of them ("... is already tailed. Use config_id to tail the same
+#     journal more than once", logged as a WARN, easy to miss).
+#   - Use `include_user_units`, not `include_units`, for a `systemctl --user`
+#     unit. `include_units` filters on the `_SYSTEMD_UNIT` field (system
+#     units only); user-unit journal entries are tagged `_SYSTEMD_USER_UNIT`
+#     instead, so `include_units` silently matches nothing for them — no
+#     error, just zero bytes read forever. This was the actual root cause of
+#     an earlier broken revision of this config.
 # - dns-sync.service managed by systemd (via Podman Quadlet)
-
-# Systemd Check Configuration (install on Datadog Agent on lunarBeacon)
-# Place in /etc/datadog-agent/conf.d/systemd.d/conf.yaml
-systemd_check:
-  instances:
-    - unit_names:
-        - cert-renewal.service
-        - dns-sync.service
+#
+# Note: manage_porkbun.py logs plain text via Python's `logging` module
+# (e.g. "... - [__main__] - [ERROR] - ... - message"), not JSON, so these
+# queries match on message content rather than a `status` facet (which
+# would require a log pipeline remap that isn't configured). The Failed
+# monitor's query uses the wildcard `*ERROR*`, not a quoted `"[ERROR]"`
+# phrase — Datadog log search treats `[` and `]` as reserved characters
+# that aren't matched literally inside a quoted phrase, so the bracketed
+# form risked never actually matching real ERROR lines.
+#
+# Note: the "Stale" monitor's query fires on any 26h gap in "Processing
+# complete" log lines, which manage_porkbun.py logs unconditionally at the
+# very end of main() — including in dry-run and even when sync_ok is False
+# (that check/exit happens after the log line). So "Stale" really means
+# "the process didn't run/log at all in 26h" (dead timer, crash before
+# reaching that line), not "the last sync failed" — that's what the
+# separate "Failed" monitor is for.
+#
+# Verified 2026-07-28: after the include_user_units fix, a real dns-sync
+# run produced non-zero "Bytes Read" on the journald tailer, the resulting
+# log (including "Processing complete") was confirmed present via
+# Datadog's Logs Search API, and both monitors settled to overall_state
+# OK. Re-verified 2026-07-29 after both timers fired naturally overnight
+# (not a manual trigger): dns-sync and cert-renewal journald tailers both
+# showed substantial non-zero Bytes Read, zero [ERROR] logs, and expected
+# completion logs present for both services — the fix holds under normal
+# unattended operation, not just manual test runs.
+#
+# Known detection gaps (peer-reviewed 2026-07-29, accepted as-is):
+# - If manage_porkbun.py is killed (OOM, signal, crash in a dependency)
+#   after doing partial work but before logging an [ERROR] or reaching the
+#   unconditional "Processing complete" line, neither monitor fires until
+#   the Stale monitor's 26h window elapses. This is a real but narrow gap;
+#   closing it would require a heartbeat/watchdog design, not just log
+#   matching.
+# - Because notify_no_data is false on both monitors, a regression of the
+#   journald pipeline itself (e.g. a future Agent upgrade or config change
+#   reintroducing the include_units/config_id bugs above) looks identical
+#   to a healthy quiet period — the Failed monitor's count just stays 0.
+#   Only the Stale monitor eventually catches total pipeline loss, with
+#   the same ~26h ceiling. If this class of bug recurs often enough to
+#   matter, consider adding a cheap canary monitor on "any dns-sync log
+#   line in the last 2h" to shrink that detection window — not added here
+#   since one 26h-bounded catch-all already exists and the added
+#   complexity isn't justified without a repeat incident.
+# - The `*ERROR*` wildcard match is coupled to manage_porkbun.py's current
+#   logging format string. If that format ever changes (e.g. drops the
+#   literal word "ERROR"), verify the Failed monitor's query still matches
+#   — a silent format change would fail the same way the include_units bug
+#   did (no error, just stops matching).
 
 ---
-# Monitor: service entered failed state
-# Fires if the last dns-sync run exited non-zero (Porkbun API error, git pull
-# failure, submodule auth failure, etc.)
+# Monitor: an ERROR was logged during a dns-sync run
 monitor:
-  name: "lunarBeacon - dns-sync.service Failed"
-  type: service check
-  query: '"systemd.service.failed".over("unit:dns-sync.service","host:lunarBeacon").by("host").last(1).count_by_status()'
+  name: "BatchMachine - dns-sync Failed (log-based)"
+  type: log alert
+  query: 'logs("service:dns-sync *ERROR*").index("main").rollup("count").last("15m") > 0'
   message: |
     {{#is_alert}}
-    dns-sync.service has entered the failed state on {{host.name}}.
+    dns-sync.service logged an ERROR on {{host.name}}.
 
     The daily Porkbun DNS sync did not complete successfully.
 
     Troubleshoot:
-      ssh lunarBeacon
+      ssh BatchMachine
       journalctl --user -u dns-sync.service -n 100
 
-    @slack-homelab-alerts
+    @pagerduty-5L_Labs_Stability
     {{/is_alert}}
 
     {{#is_recovery}}
-    dns-sync.service has recovered on {{host.name}}.
+    No further dns-sync ERROR logs on {{host.name}}.
     {{/is_recovery}}
   options:
     thresholds:
-      critical: 1
-      ok: 1
+      critical: 0
     notify_no_data: false
     notify_audit: false
     renotify_interval: 1440
   tags:
     - service:dns-sync
     - env:production
-    - host:lunarBeacon
+    - host:BatchMachine
   priority: 2
 
 ---
-# Monitor: timer has not fired in >26 hours (catches missed runs / timer death)
-monitor_timer:
-  name: "lunarBeacon - dns-sync.timer Stale"
-  type: metric alert
-  query: "max(last_26h):max:systemd.timer.last_trigger_usec{unit:dns-sync.timer,host:lunarBeacon} < 1"
+# Monitor: no successful completion log seen in >26 hours (catches missed
+# runs / a dead timer, replacing the broken timer-metric approach)
+monitor_stale:
+  name: "BatchMachine - dns-sync Stale (log-based)"
+  type: log alert
+  query: 'logs("service:dns-sync \"Processing complete\"").index("main").rollup("count").last("26h") < 1'
   message: |
     {{#is_alert}}
-    dns-sync.timer has not fired on {{host.name}} in over 26 hours.
+    No dns-sync completion log seen on {{host.name}} in over 26 hours.
 
     The timer may be disabled or the unit may have failed to load.
 
     Check:
-      ssh lunarBeacon
+      ssh BatchMachine
       systemctl --user list-timers dns-sync
       systemctl --user status dns-sync.timer
 
-    @slack-homelab-alerts
+    @pagerduty-5L_Labs_Stability
     {{/is_alert}}
 
     {{#is_recovery}}
-    dns-sync.timer is firing again on {{host.name}}.
+    dns-sync completion logs are flowing again on {{host.name}}.
     {{/is_recovery}}
   options:
     thresholds:
       critical: 1
-    notify_no_data: true
-    no_data_timeframe: 1440
+    notify_no_data: false
     notify_audit: false
     renotify_interval: 1440
   tags:
     - service:dns-sync
     - env:production
-    - host:lunarBeacon
+    - host:BatchMachine
   priority: 2
