@@ -1,0 +1,16 @@
+[Unit]
+Description=Build dns-sync image
+
+# Rebuilt on every dns-sync run (cached layers make this fast). This recreates
+# the image after a reboot or `podman system prune --all`, which previously
+# left dns-sync.service failing with exit 125 trying to pull localhost/.
+[Build]
+ImageTag=localhost/dns-sync:latest
+File=/data/infrastructure/dns_management/Containerfile
+SetWorkingDirectory=/data/infrastructure/dns_management
+
+[Service]
+ExecStartPre=/usr/bin/git -C /data/infrastructure/dns_management pull --ff-only
+ExecStartPre=/usr/bin/git -C /data/infrastructure/dns_management submodule update --init
+RemainAfterExit=no
+TimeoutStartSec=900
